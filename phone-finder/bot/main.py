@@ -21,6 +21,9 @@ TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL")
 PORT = int(os.getenv("PORT", "10000"))
+HLR_API_KEY = os.getenv("HLR_API_KEY")
+HLR_API_SECRET = os.getenv("HLR_API_SECRET")
+FNS_API_KEY = os.getenv("FNS_API_KEY")
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -233,6 +236,81 @@ async def inn_result(raw: str) -> str:
     )
 
 
+async def hlr_lookup(e164: str) -> str:
+    """Optional paid HLR lookup. Requires the user's own HLR Lookup API credentials."""
+    if not HLR_API_KEY or not HLR_API_SECRET:
+        return "📡 HLR: не подключён — добавьте HLR_API_KEY и HLR_API_SECRET в Render."
+    digits = re.sub(r"\\D", "", e164)
+    payload = {
+        "api_key": HLR_API_KEY,
+        "api_secret": HLR_API_SECRET,
+        "requests": [{"telephone_number": digits, "cache_days_private": 0, "cache_days_global": 0}],
+    }
+    timeout = aiohttp.ClientTimeout(total=20)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post("https://api.hlrlookup.com/apiv2/hlr", json=payload) as response:
+                data = await response.json(content_type=None)
+                if response.status != 200:
+                    return f"📡 HLR: провайдер вернул HTTP {response.status}."
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return "📡 HLR: сервис временно недоступен."
+    try:
+        result = data["body"]["results"][0]
+    except (KeyError, IndexError, TypeError):
+        return "📡 HLR: провайдер не вернул результат."
+    if result.get("error") not in (None, "NONE"):
+        return f"📡 HLR: ошибка проверки ({result.get('error')})."
+    network = result.get("current_network_details") or {}
+    status = result.get("live_status") or "Нет данных"
+    number_type = result.get("telephone_number_type") or "Нет данных"
+    operator = network.get("name") or "Нет данных"
+    ported = result.get("is_ported") or "Неизвестно"
+    stamp = result.get("timestamp") or "не указано"
+    return (
+        "\\n\\n📡 HLR — ПРОВЕРКА СЕТИ (платный внешний сервис)\\n"
+        f"Статус доступности: {status}\\nТип номера: {number_type}\\n"
+        f"Текущая сеть: {operator}\\nПеренос номера: {ported}\\n"
+        f"Время проверки: {stamp}\\n"
+        "ℹ️ HLR не раскрывает владельца, адрес или местоположение человека."
+    )
+
+
+async def fns_company_lookup(inn: str) -> str:
+    """Optional company-only registry lookup through API-FNS; 10-digit INN only."""
+    if not FNS_API_KEY:
+        return "Для получения карточки организации добавьте FNS_API_KEY в Render."
+    if len(inn) != 10:
+        return "Поиск в реестре организаций доступен только для 10-значного ИНН юрлица."
+    url = "https://api-fns.ru/api/egr"
+    timeout = aiohttp.ClientTimeout(total=15)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, params={"req": inn, "key": FNS_API_KEY}) as response:
+                data = await response.json(content_type=None)
+                if response.status != 200:
+                    return f"Реестр ФНС: HTTP {response.status}."
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return "Реестр ФНС временно недоступен."
+    # Provider response schemas can vary by account/plan; show only verified company fields.
+    try:
+        items = data.get("items") or data.get("КРСБ") or []
+        if isinstance(items, dict):
+            items = [items]
+        item = items[0] if items else {}
+        company = item.get("ЮЛ") or item.get("ИП") or item
+        name = company.get("НаимПолнЮЛ") or company.get("НаимСокрЮЛ") or company.get("НаимПолн") or company.get("Наим") or "Нет данных"
+        ogrn = company.get("ОГРН") or company.get("ОГРНИП") or "Нет данных"
+        status = company.get("Статус") or company.get("СведСтат") or "Нет данных"
+        return (
+            "🏢 ЕГРЮЛ/ЕГРИП — ОТКРЫТЫЕ СВЕДЕНИЯ\\n\\n"
+            f"ИНН: {inn}\\nНаименование: {name}\\nОГРН/ОГРНИП: {ogrn}\\nСтатус: {status}\\n"
+            "Источник: API-ФНС; сведения могут зависеть от тарифа и формата ответа."
+        )
+    except (AttributeError, IndexError, TypeError):
+        return "Реестр ответил, но формат карточки не распознан. Проверьте тариф и документацию API-ФНС."
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = context.user_data.get("mode")
     message = update.effective_message
@@ -260,7 +338,7 @@ async def inn_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["mode"] = "inn"
         await update.effective_message.reply_text("Отправьте ИНН из 10 или 12 цифр.")
         return
-    await update.effective_message.reply_text(await inn_result(value), reply_markup=MENU)
+    base = await inn_result(value)\n    if len(re.sub(r"\\D", "", value)) == 10:\n        base += "\\n\\n" + await fns_company_lookup(re.sub(r"\\D", "", value))\n    await update.effective_message.reply_text(base, reply_markup=MENU)
 
 
 async def ip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
