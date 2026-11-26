@@ -1,4 +1,5 @@
 name: Build MyVPN APK
+# Rebuild trigger: generate the Android VPN APK
 
 on:
   workflow_dispatch:
