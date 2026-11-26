@@ -240,7 +240,7 @@ async def hlr_lookup(e164: str) -> str:
     """Optional paid HLR lookup. Requires the user's own HLR Lookup API credentials."""
     if not HLR_API_KEY or not HLR_API_SECRET:
         return "📡 HLR: не подключён — добавьте HLR_API_KEY и HLR_API_SECRET в Render."
-    digits = re.sub(r"\\D", "", e164)
+    digits = re.sub(r"\D", "", e164)
     payload = {
         "api_key": HLR_API_KEY,
         "api_secret": HLR_API_SECRET,
@@ -317,12 +317,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     value = (message.text or "").strip()
     if mode == "phone":
         result = phone_result(value)
+        if result.startswith("📲 КОНТАКТЫ"):
+            try:
+                parsed = phonenumbers.parse(value, None)
+                e164 = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+                result += await hlr_lookup(e164)
+            except phonenumbers.NumberParseException:
+                pass
     elif mode == "username":
         result = username_result(value)
     elif mode == "network":
         result = await network_result(value)
     elif mode == "inn":
         result = await inn_result(value)
+        digits = re.sub(r"\D", "", value)
+        if len(digits) == 10:
+            result += "\n\n" + await fns_company_lookup(digits)
     else:
         await message.reply_text(
             "Сначала выберите действие или отправьте /start.", reply_markup=MENU
@@ -338,7 +348,7 @@ async def inn_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["mode"] = "inn"
         await update.effective_message.reply_text("Отправьте ИНН из 10 или 12 цифр.")
         return
-    base = await inn_result(value)\n    if len(re.sub(r"\\D", "", value)) == 10:\n        base += "\\n\\n" + await fns_company_lookup(re.sub(r"\\D", "", value))\n    await update.effective_message.reply_text(base, reply_markup=MENU)
+    base = await inn_result(value)\n    if len(re.sub(r"\D", "", value)) == 10:\n        base += "\\n\\n" + await fns_company_lookup(re.sub(r"\D", "", value))\n    await update.effective_message.reply_text(base, reply_markup=MENU)
 
 
 async def ip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
