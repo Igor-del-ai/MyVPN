@@ -35,6 +35,7 @@ MENU = InlineKeyboardMarkup([
     [InlineKeyboardButton("📞 Проверить номер", callback_data="phone"),
      InlineKeyboardButton("👤 Telegram username", callback_data="username")],
     [InlineKeyboardButton("🌐 Домен / IP", callback_data="network")],
+    [InlineKeyboardButton("🏢 Проверить ИНН организации", callback_data="inn")],
     [InlineKeyboardButton("ℹ️ Помощь", callback_data="help")],
 ])
 
@@ -69,6 +70,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "phone": ("phone", "Введите номер в международном формате, например +33123456789."),
         "username": ("username", "Введите публичное имя Telegram, например @telegram."),
         "network": ("network", "Введите домен (example.com) или IP-адрес (1.1.1.1)."),
+        "inn": ("inn", "Введите 10-значный ИНН организации."),
     }
     if query.data in modes:
         mode, prompt = modes[query.data]
@@ -217,17 +219,11 @@ async def network_result(raw: str) -> str:
 
 async def inn_result(raw: str) -> str:
     digits = re.sub(r"\D", "", raw)
-    if len(digits) not in (10, 12):
-        return "❌ ИНН должен содержать 10 цифр (организация) или 12 цифр (физлицо / ИП)."
+    if len(digits) != 10:
+        return "❌ Для этой функции принимается только 10-значный ИНН юридического лица. Персональные ИНН не обрабатываются."
     def checksum(number: str, weights) -> int:
         return sum(int(d) * w for d, w in zip(number, weights)) % 11 % 10
-    if len(digits) == 10:
-        valid = checksum(digits[:9], (2, 4, 10, 3, 5, 9, 4, 6, 8)) == int(digits[9])
-    else:
-        valid = (
-            checksum(digits[:10], (7, 2, 4, 10, 3, 5, 9, 4, 6, 8)) == int(digits[10])
-            and checksum(digits[:11], (3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8)) == int(digits[11])
-        )
+    valid = checksum(digits[:9], (2, 4, 10, 3, 5, 9, 4, 6, 8)) == int(digits[9])
     return (
         "🏢 ЮРИДИЧЕСКОЕ ЛИЦО — ПРОВЕРКА ИНН\n\n"
         f"ИНН: {digits}\nКонтрольные цифры: {'проверка пройдена' if valid else 'не совпадают'}\n\n"
