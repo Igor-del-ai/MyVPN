@@ -96,7 +96,7 @@ def phone_result(raw: str) -> str:
 
 def username_result(raw: str) -> str:
     value = raw.strip()
-    value = re.sub(r"^https?://t\\.me/", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"^https?://t\.me/", "", value, flags=re.IGNORECASE)
     value = value.split("?", 1)[0].strip("/")
     if value.startswith("@"):
         value = value[1:]
