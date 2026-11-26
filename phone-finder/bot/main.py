@@ -1,11 +1,15 @@
 import asyncio
 import hmac
+import ipaddress
 import logging
 import os
 import re
+from datetime import datetime
 
+import aiohttp
 import phonenumbers
 from phonenumbers import carrier, geocoder, timezone
+from phonenumbers.phonenumberutil import PhoneNumberType
 from aiohttp import web
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -25,18 +29,22 @@ logging.basicConfig(
 log = logging.getLogger("phone-finder")
 
 MENU = InlineKeyboardMarkup([
-    [InlineKeyboardButton("📞 Проверить номер", callback_data="phone")],
-    [InlineKeyboardButton("👤 Проверить @username", callback_data="username")],
+    [InlineKeyboardButton("📞 Проверить номер", callback_data="phone"),
+     InlineKeyboardButton("👤 Telegram username", callback_data="username")],
+    [InlineKeyboardButton("🌐 Домен / IP", callback_data="network")],
     [InlineKeyboardButton("ℹ️ Помощь", callback_data="help")],
 ])
 
 HELP = (
-    "Как пользоваться:\n\n"
-    "📞 Номер — отправьте номер в международном формате, например +33123456789. "
-    "Я покажу страну, справочный регион, оператора (если доступен в базе) и часовые пояса.\n\n"
-    "👤 Username — отправьте @username. Я проверю формат и сформирую ссылку на публичный профиль.\n\n"
-    "Важно: бот не определяет владельца номера, точный адрес, местоположение человека "
-    "или скрытые данные Telegram-профиля."
+    "🔎 Phone Finder — справочная проверка открытых технических данных\n\n"
+    "📞 Номер: отправьте номер в международном формате (+33123456789). "
+    "Покажу формат, страну, справочный регион, тип номера, оператора (если есть в базе) и часовые пояса.\n\n"
+    "👤 Telegram: отправьте публичный @username — сформирую ссылку на профиль.\n\n"
+    "🌐 Домен / IP: отправьте домен (example.com) или IP-адрес — покажу публичные технические "
+    "сведения реестра RDAP. Контактные данные частных лиц не отображаются.\n\n"
+    "Ограничения: бот не устанавливает личность владельца телефона, не ищет паспорта, СНИЛС, "
+    "домашние адреса, скрытые аккаунты или сведения из утечек. Публичные упоминания номера "
+    "и HLR-статус не проверяются без подключённого легального API-провайдера."
 )
 
 
@@ -54,18 +62,36 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if query.data == "phone":
-        context.user_data["mode"] = "phone"
-        await query.message.reply_text(
-            "Введите номер в международном формате, например +33123456789."
-        )
-    elif query.data == "username":
-        context.user_data["mode"] = "username"
-        await query.message.reply_text(
-            "Введите публичное имя Telegram, например @telegram."
-        )
+    modes = {
+        "phone": ("phone", "Введите номер в международном формате, например +33123456789."),
+        "username": ("username", "Введите публичное имя Telegram, например @telegram."),
+        "network": ("network", "Введите домен (example.com) или IP-адрес (1.1.1.1)."),
+    }
+    if query.data in modes:
+        mode, prompt = modes[query.data]
+        context.user_data["mode"] = mode
+        await query.message.reply_text(prompt)
     else:
         await query.message.reply_text(HELP, reply_markup=MENU)
+
+
+def phone_type_name(number) -> str:
+    kind = phonenumbers.number_type(number)
+    names = {
+        PhoneNumberType.MOBILE: "Мобильный",
+        PhoneNumberType.FIXED_LINE: "Стационарный",
+        PhoneNumberType.FIXED_LINE_OR_MOBILE: "Стационарный / мобильный (не уточняется)",
+        PhoneNumberType.TOLL_FREE: "Бесплатный",
+        PhoneNumberType.PREMIUM_RATE: "Платный сервисный",
+        PhoneNumberType.SHARED_COST: "Совместная оплата",
+        PhoneNumberType.VOIP: "VoIP",
+        PhoneNumberType.PERSONAL_NUMBER: "Персональный",
+        PhoneNumberType.PAGER: "Пейджер",
+        PhoneNumberType.UAN: "Универсальный доступ",
+        PhoneNumberType.VOICEMAIL: "Голосовая почта",
+        PhoneNumberType.UNKNOWN: "Неизвестен",
+    }
+    return names.get(kind, "Неизвестен")
 
 
 def phone_result(raw: str) -> str:
@@ -82,15 +108,25 @@ def phone_result(raw: str) -> str:
     operator = carrier.name_for_number(number, "ru") or "Нет доступных данных"
     zones = ", ".join(timezone.time_zones_for_number(number)) or "Неизвестно"
     country = phonenumbers.region_code_for_number(number) or "Неизвестно"
+    national = phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.NATIONAL)
+    international = phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+    e164 = phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
     return (
-        "📞 Результат проверки\n\n"
-        f"Номер: {phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.INTERNATIONAL)}\n"
-        f"Страна/код региона: {country}\n"
+        "📲 КОНТАКТЫ — РЕЗУЛЬТАТ ПРОВЕРКИ\n\n"
+        f"Номер: {international}\n"
+        f"Национальный формат: {national}\n"
+        f"Формат E.164: {e164}\n"
+        f"Страна / код региона: {country}\n"
         f"Регион (справочно): {region}\n"
-        f"Оператор (если доступно): {operator}\n"
-        f"Часовой пояс: {zones}\n\n"
-        "⚠️ Это справочные сведения по телефонному плану. Они не устанавливают личность "
-        "владельца и не показывают его текущее местоположение."
+        f"Тип номера: {phone_type_name(number)}\n"
+        f"Оператор (справочная база): {operator}\n"
+        f"Часовой пояс телефонного региона: {zones}\n\n"
+        "👤 Личность владельца: не определяется по номеру.\n"
+        "🌐 Публичные упоминания: для поиска нужен отдельный легальный поисковый API; "
+        "в этой версии такой источник не подключён.\n"
+        "🛡 Репутация / жалобы: источник данных не подключён.\n\n"
+        "ℹ️ Сведения относятся к телефонному плану и могут быть неполными; "
+        "они не подтверждают личность владельца или его местоположение."
     )
 
 
@@ -103,34 +139,146 @@ def username_result(raw: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", value):
         return "❌ Неверный формат. Используйте 5–32 символа: латинские буквы, цифры и подчёркивание."
     return (
-        "👤 Username распознан\n\n"
-        f"Имя: @{value}\n"
-        f"Публичная ссылка: https://t.me/{value}\n\n"
-        "ℹ️ Я не могу подтвердить владельца аккаунта или получить скрытые сведения. "
-        "Откройте ссылку, чтобы проверить публичную страницу в Telegram."
+        "💬 TELEGRAM — ПУБЛИЧНЫЙ ПРОФИЛЬ\n\n"
+        f"Username: @{value}\n"
+        f"Ссылка: https://t.me/{value}\n\n"
+        "ℹ️ Бот может сформировать ссылку, но не может получить скрытые сведения, "
+        "номер телефона или подтвердить личность владельца."
+    )
+
+
+def _rdap_date(value: str) -> str:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return value or "Нет данных"
+
+
+async def network_result(raw: str) -> str:
+    value = raw.strip()
+    is_ip = False
+    try:
+        parsed_ip = ipaddress.ip_address(value)
+        is_ip = True
+        endpoint = f"https://rdap.org/ip/{parsed_ip}"
+        heading = "🌐 IP-АДРЕС — ПУБЛИЧНЫЕ ТЕХНИЧЕСКИЕ ДАННЫЕ"
+    except ValueError:
+        domain = value.lower().rstrip(".")
+        if domain.startswith(("http://", "https://")):
+            domain = domain.split("://", 1)[1].split("/", 1)[0]
+        if not re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", domain):
+            return "❌ Введите корректный домен (example.com) или IP-адрес (1.1.1.1)."
+        endpoint = f"https://rdap.org/domain/{domain}"
+        heading = "🌐 ДОМЕН — ПУБЛИЧНЫЕ ТЕХНИЧЕСКИЕ ДАННЫЕ"
+
+    timeout = aiohttp.ClientTimeout(total=12)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout, headers={"User-Agent": "PhoneFinder/1.0"}) as session:
+            async with session.get(endpoint) as response:
+                if response.status != 200:
+                    return f"{heading}\n\nЗапрос к публичному реестру RDAP не дал результата (HTTP {response.status})."
+                data = await response.json(content_type=None)
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return f"{heading}\n\nНе удалось получить ответ от публичного реестра RDAP. Попробуйте позже."
+
+    if is_ip:
+        name = data.get("name") or data.get("handle") or "Нет данных"
+        country = data.get("country") or "Нет данных"
+        start = data.get("startAddress") or "Нет данных"
+        end = data.get("endAddress") or "Нет данных"
+        events = {e.get("eventAction"): _rdap_date(e.get("eventDate", "")) for e in data.get("events", [])}
+        return (
+            f"{heading}\n\nIP: {value}\nСеть / запись: {name}\nСтрана реестра: {country}\n"
+            f"Диапазон: {start} — {end}\nДата регистрации: {events.get('registration', 'Нет данных')}\n\n"
+            "ℹ️ Это сведения о сетевом ресурсе, а не о конкретном пользователе или его физическом адресе."
+        )
+
+    events = {e.get("eventAction"): _rdap_date(e.get("eventDate", "")) for e in data.get("events", [])}
+    registrar = "Нет данных"
+    for entity in data.get("entities", []):
+        if "registrar" in entity.get("roles", []):
+            vcard = entity.get("vcardArray", [])
+            if len(vcard) > 1:
+                registrar = next((item[3] for item in vcard[1] if item[0] == "fn" and len(item) > 3), "Нет данных")
+            break
+    nameservers = ", ".join(ns.get("ldhName", "") for ns in data.get("nameservers", [])[:6]) or "Нет данных"
+    status = ", ".join(data.get("status", [])) or "Нет данных"
+    return (
+        f"{heading}\n\nДомен: {value}\nРегистратор: {registrar}\n"
+        f"Дата регистрации: {events.get('registration', 'Нет данных')}\n"
+        f"Истечение регистрации: {events.get('expiration', 'Нет данных')}\n"
+        f"Статус: {status}\nDNS-серверы: {nameservers}\n\n"
+        "ℹ️ Контактные данные частных регистрантов не выводятся."
+    )
+
+
+async def inn_result(raw: str) -> str:
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) not in (10, 12):
+        return "❌ ИНН должен содержать 10 цифр (организация) или 12 цифр (физлицо / ИП)."
+    def checksum(number: str, weights) -> int:
+        return sum(int(d) * w for d, w in zip(number, weights)) % 11 % 10
+    if len(digits) == 10:
+        valid = checksum(digits[:9], (2, 4, 10, 3, 5, 9, 4, 6, 8)) == int(digits[9])
+    else:
+        valid = (
+            checksum(digits[:10], (7, 2, 4, 10, 3, 5, 9, 4, 6, 8)) == int(digits[10])
+            and checksum(digits[:11], (3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8)) == int(digits[11])
+        )
+    return (
+        "🏢 ЮРИДИЧЕСКОЕ ЛИЦО — ПРОВЕРКА ИНН\n\n"
+        f"ИНН: {digits}\nКонтрольные цифры: {'проверка пройдена' if valid else 'не совпадают'}\n\n"
+        "ℹ️ Это только проверка структуры номера. Название организации и сведения из ЕГРЮЛ "
+        "не запрашиваются: официальный реестровый источник/API ещё не подключён."
     )
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = context.user_data.get("mode")
     message = update.effective_message
-    text = (message.text or "").strip()
+    value = (message.text or "").strip()
     if mode == "phone":
-        await message.reply_text(phone_result(text), reply_markup=MENU)
-        context.user_data.pop("mode", None)
+        result = phone_result(value)
     elif mode == "username":
-        await message.reply_text(username_result(text), reply_markup=MENU)
-        context.user_data.pop("mode", None)
+        result = username_result(value)
+    elif mode == "network":
+        result = await network_result(value)
+    elif mode == "inn":
+        result = await inn_result(value)
     else:
         await message.reply_text(
             "Сначала выберите действие или отправьте /start.", reply_markup=MENU
         )
+        return
+    await message.reply_text(result, reply_markup=MENU, disable_web_page_preview=True)
+    context.user_data.pop("mode", None)
+
+
+async def inn_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    value = " ".join(context.args).strip()
+    if not value:
+        context.user_data["mode"] = "inn"
+        await update.effective_message.reply_text("Отправьте ИНН из 10 или 12 цифр.")
+        return
+    await update.effective_message.reply_text(await inn_result(value), reply_markup=MENU)
+
+
+async def ip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    value = " ".join(context.args).strip()
+    if not value:
+        context.user_data["mode"] = "network"
+        await update.effective_message.reply_text("Отправьте IP-адрес или домен.")
+        return
+    await update.effective_message.reply_text(await network_result(value), reply_markup=MENU)
 
 
 def build_application():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("inn", inn_cmd))
+    app.add_handler(CommandHandler("ip", ip_cmd))
+    app.add_handler(CommandHandler("domain", ip_cmd))
     app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     return app
