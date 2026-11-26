@@ -1,0 +1,12 @@
+services:
+  - type: worker
+    name: phone-finder-bot
+    runtime: python
+    region: frankfurt
+    plan: 0.5c-512mb
+    rootDir: phone-finder
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
