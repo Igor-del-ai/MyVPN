@@ -268,10 +268,10 @@ async def hlr_lookup(e164: str) -> str:
     ported = result.get("is_ported") or "Неизвестно"
     stamp = result.get("timestamp") or "не указано"
     return (
-        "\\n\\n📡 HLR — ПРОВЕРКА СЕТИ (платный внешний сервис)\\n"
-        f"Статус доступности: {status}\\nТип номера: {number_type}\\n"
-        f"Текущая сеть: {operator}\\nПеренос номера: {ported}\\n"
-        f"Время проверки: {stamp}\\n"
+        "\n\n📡 HLR — ПРОВЕРКА СЕТИ (платный внешний сервис)\n"
+        f"Статус доступности: {status}\nТип номера: {number_type}\n"
+        f"Текущая сеть: {operator}\nПеренос номера: {ported}\n"
+        f"Время проверки: {stamp}\n"
         "ℹ️ HLR не раскрывает владельца, адрес или местоположение человека."
     )
 
@@ -303,8 +303,8 @@ async def fns_company_lookup(inn: str) -> str:
         ogrn = company.get("ОГРН") or company.get("ОГРНИП") or "Нет данных"
         status = company.get("Статус") or company.get("СведСтат") or "Нет данных"
         return (
-            "🏢 ЕГРЮЛ/ЕГРИП — ОТКРЫТЫЕ СВЕДЕНИЯ\\n\\n"
-            f"ИНН: {inn}\\nНаименование: {name}\\nОГРН/ОГРНИП: {ogrn}\\nСтатус: {status}\\n"
+            "🏢 ЕГРЮЛ/ЕГРИП — ОТКРЫТЫЕ СВЕДЕНИЯ\n\n"
+            f"ИНН: {inn}\nНаименование: {name}\nОГРН/ОГРНИП: {ogrn}\nСтатус: {status}\n"
             "Источник: API-ФНС; сведения могут зависеть от тарифа и формата ответа."
         )
     except (AttributeError, IndexError, TypeError):
@@ -348,7 +348,11 @@ async def inn_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["mode"] = "inn"
         await update.effective_message.reply_text("Отправьте ИНН из 10 или 12 цифр.")
         return
-    base = await inn_result(value)\n    if len(re.sub(r"\D", "", value)) == 10:\n        base += "\\n\\n" + await fns_company_lookup(re.sub(r"\D", "", value))\n    await update.effective_message.reply_text(base, reply_markup=MENU)
+    base = await inn_result(value)
+    digits = re.sub(r"\D", "", value)
+    if len(digits) == 10:
+        base += "\n\n" + await fns_company_lookup(digits)
+    await update.effective_message.reply_text(base, reply_markup=MENU)
 
 
 async def ip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
