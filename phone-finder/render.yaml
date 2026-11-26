@@ -1,12 +1,15 @@
 services:
-  - type: worker
+  - type: web
     name: phone-finder-bot
     runtime: python
     region: frankfurt
-    plan: 0.5c-512mb
+    plan: free
     rootDir: phone-finder
     buildCommand: pip install -r requirements.txt
     startCommand: python run.py
+    healthCheckPath: /health
     envVars:
       - key: BOT_TOKEN
         sync: false
+      - key: WEBHOOK_SECRET
+        generateValue: true
