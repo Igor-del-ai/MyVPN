@@ -56,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -104,6 +105,7 @@ fun ProfilesCard(
     onOpenNewProfile: (NewProfileArgs) -> Unit,
 ) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
 
     val importHandler = remember { ProfileImportHandler(context) }
@@ -388,6 +390,65 @@ fun ProfilesCard(
                     text = stringResource(R.string.add_profile),
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+                )
+
+                ListItem(
+                    modifier = Modifier.clickable {
+                        onHideAddProfileSheet()
+                        val clipboardText = clipboardManager.getText()?.text.orEmpty()
+                        if (clipboardText.isBlank()) {
+                            Toast.makeText(context, "Буфер обмена пуст", Toast.LENGTH_SHORT).show()
+                        } else {
+                            coroutineScope.launch {
+                                when (val result = importHandler.importFromClipboard(clipboardText)) {
+                                    is ProfileImportHandler.ImportResult.Success -> {
+                                        Toast.makeText(context, "VPN-конфигурация добавлена", Toast.LENGTH_SHORT).show()
+                                    }
+                                    is ProfileImportHandler.ImportResult.Error -> {
+                                        context.errorDialogBuilder(Exception(result.message)).show()
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    leadingContent = {
+                        Icon(
+                            imageVector = Icons.Default.DataObject,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    },
+                    headlineContent = {
+                        Text("Вставить из буфера обмена")
+                    },
+                    supportingContent = {
+                        Text("Импортировать ссылку, подписку или JSON-конфигурацию")
+                    },
+                )
+
+                ListItem(
+                    modifier = Modifier.clickable {
+                        onHideAddProfileSheet()
+                        onOpenNewProfile(
+                            NewProfileArgs(
+                                importName = "Бесплатные серверы",
+                                importUrl = "https://raw.githubusercontent.com/Au1rxx/free-vpn-subscriptions/main/output/singbox.json",
+                            ),
+                        )
+                    },
+                    leadingContent = {
+                        Icon(
+                            imageVector = Icons.Default.Cloud,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    },
+                    headlineContent = {
+                        Text("Бесплатные серверы")
+                    },
+                    supportingContent = {
+                        Text("Добавить публичную подписку с серверами sing-box")
+                    },
                 )
 
                 ListItem(
