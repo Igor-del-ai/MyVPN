@@ -45,6 +45,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -57,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -79,6 +81,7 @@ fun NewProfileScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
 
     LaunchedEffect(importName, importUrl, qrsData) {
         if (qrsData != null) {
@@ -508,6 +511,34 @@ fun NewProfileScreen(
                                     )
                                 }
                             },
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    clipboardManager.getText()?.text?.trim()?.takeIf { it.isNotEmpty() }?.let(viewModel::updateRemoteUrl)
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Вставить из буфера")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.updateName("Бесплатные публичные серверы")
+                                    viewModel.updateRemoteUrl("https://raw.githubusercontent.com/Au1rxx/free-vpn-subscriptions/main/output/singbox.json")
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Бесплатные серверы")
+                            }
+                        }
+                        Text(
+                            text = "Публичные серверы предоставлены сторонними операторами. Они могут отключаться; не используйте их для банков и важных аккаунтов.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
 
                         HorizontalDivider()
