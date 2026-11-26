@@ -38,7 +38,12 @@ jobs:
           SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
           yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
-          "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" "ndk;28.0.13004108"
+          "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" "ndk;28.0.13004108"
+          # Android publishes API 37 as android-37.0, while this AGP build
+          # resolves compileSdk 37 using the legacy android-37 directory name.
+          if [ -d "$SDK_ROOT/platforms/android-37.0" ] && [ ! -e "$SDK_ROOT/platforms/android-37" ]; then
+            ln -s android-37.0 "$SDK_ROOT/platforms/android-37"
+          fi
           echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/28.0.13004108" >> "$GITHUB_ENV"
 
       - name: Set up Go
