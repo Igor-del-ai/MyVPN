@@ -145,6 +145,21 @@ class ProfileImportHandler(private val context: Context) {
         }
     }
 
+    suspend fun importFromClipboard(data: String): ImportResult {
+        val clipboardContent = data.trim()
+        if (clipboardContent.isEmpty()) {
+            return ImportResult.Error("Буфер обмена пуст")
+        }
+
+        // Accept a complete sing-box JSON config, a profile share payload,
+        // a sing-box remote-profile link, or a subscription URL.
+        return if (isJsonConfiguration(clipboardContent)) {
+            importJsonConfiguration(clipboardContent, "Буфер обмена")
+        } else {
+            importFromQRCode(clipboardContent)
+        }
+    }
+
     suspend fun importFromQRCode(data: String): ImportResult = withContext(Dispatchers.IO) {
         try {
             // Check if it's a sing-box remote profile import link
