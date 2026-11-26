@@ -3,30 +3,78 @@ name: Build MyVPN APK
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout MyVPN
+        uses: actions/checkout@v5
+        with:
+          ref: dev
+          fetch-depth: 0
 
-      - name: Setup JDK
-        uses: actions/setup-java@v4
+      - name: Checkout matching sing-box source
+        uses: actions/checkout@v5
+        with:
+          repository: SagerNet/sing-box
+          ref: v1.15.0-alpha.13
+          path: sing-box
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Build APK
+      - name: Install Android SDK and NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-37" "ndk;28.0.13004108"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.0.13004108" >> "$GITHUB_ENV"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.5'
+          cache: false
+
+      - name: Install gomobile tools
+        run: |
+          go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.12
+          go install github.com/sagernet/gomobile/cmd/gobind@v0.1.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Build matching libbox Android libraries
+        working-directory: sing-box
+        run: go run ./cmd/internal/build_libbox -target android
+
+      - name: Add libbox libraries to Android app
+        run: |
+          mkdir -p app/libs
+          cp sing-box/libbox.aar app/libs/libbox.aar
+          cp sing-box/libbox-legacy.aar app/libs/libbox-legacy.aar
+          test -s app/libs/libbox.aar
+          test -s app/libs/libbox-legacy.aar
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Build Android APK
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleDebug
+          ./gradlew :app:assembleOtherDebug --stacktrace
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: MyVPN-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
